@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>單字 Vault</title>
+<style>
+* { margin:0; padding:0; box-sizing:border-box; }
+body { background:#111; color:#f0ede8; font-family:-apple-system,sans-serif; padding:20px 16px 80px; max-width:560px; margin:0 auto; }
+h1 { font-size:1.8rem; font-weight:700; color:#c8f060; margin-bottom:4px; }
+p.sub { font-size:0.8rem; color:#555; margin-bottom:24px; }
+.lbl { font-size:0.72rem; font-weight:600; letter-spacing:0.08em; color:#888; text-transform:uppercase; margin-bottom:8px; }
+textarea { display:block; width:100%; height:96px; background:#1e1e1e; border:1px solid #333; border-radius:12px; padding:14px; color:#f0ede8; font-size:16px; outline:none; resize:none; }
+textarea:focus { border-color:#c8f060; }
+hr { border:none; border-top:1px solid #222; margin:20px 0; }
+
+/* File button — plain label, no tricks */
+.file-btn {
+  display:block;
+  width:100%;
+  padding:16px;
+  background:#1e1e1e;
+  border:1px solid #333;
+  border-radius:12px;
+  color:#f0ede8;
+  font-size:16px;
+  text-align:center;
+  cursor:pointer;
+  margin-bottom:10px;
+}
+
+#thumbs { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:10px; }
+.thumb { width:70px; height:70px; border-radius:8px; object-fit:cover; border:1px solid #444; }
+
+.go-btn {
+  display:block;
+  width:100%;
+  padding:18px;
+  background:#c8f060;
+  color:#111;
+  border:none;
+  border-radius:14px;
+  font-size:17px;
+  font-weight:700;
+  cursor:pointer;
+  margin-top:20px;
+}
+.go-btn:disabled { background:#333; color:#666; }
+
+#progress { display:none; margin-top:20px; }
+.ptxt { font-size:0.85rem; color:#888; margin-bottom:8px; }
+.pbar-bg { background:#222; border-radius:99px; height:8px; overflow:hidden; }
+.pbar { height:100%; background:#c8f060; border-radius:99px; width:0%; transition:width 0.3s; }
+#log { margin-top:12px; max-height:260px; overflow-y:auto; background:#1a1a1a; border-radius:10px; padding:10px; }
+.row { font-size:0.78rem; padding:5px 0; border-bottom:1px solid #222; display:flex; gap:6px; align-items:flex-start; }
+.row:last-child { border-bottom:none; }
+.rw { color:#60d0f0; }
+.row.ok .rw { color:#60f0a0; }
+.row.err .rw { color:#f06060; }
+.ri { color:#555; font-size:0.72rem; margin-top:2px; }
+
+#summary { display:none; margin-top:20px; }
+.sg { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-bottom:14px; }
+.sb { background:#1a1a1a; border-radius:10px; padding:16px; text-align:center; }
+.sn { font-size:2rem; font-weight:700; }
+.sn.g { color:#60f0a0; } .sn.r { color:#f06060; }
+.sl { font-size:0.72rem; color:#555; margin-top:4px; }
+.reset-btn { display:block; width:100%; padding:14px; background:transparent; color:#888; border:1px solid #333; border-radius:12px; font-size:15px; cursor:pointer; }
+</style>
+</head>
+<body>
+
+<h1>單字 Vault</h1>
+<p class="sub">輸入單字或拍照，自動寫入 Google Sheet</p>
+
+<div id="main">
+  <div class="lbl">文字輸入</div>
+  <textarea id="words" placeholder="輸入單字，逗號分隔&#10;例：serendipity, ephemeral, pact"></textarea>
+
+  <hr>
+
+  <div class="lbl">圖片辨識</div>
+  <label class="file-btn" for="pics">📷 選擇照片或圖片</label>
+  <input type="file" id="pics" accept="image/*" multiple style="width:1px;height:1px;opacity:0;position:fixed;left:0;top:0;">
+  <div id="thumbs"></div>
+
+  <button class="go-btn" id="goBtn">開始生成並寫入 Sheet</button>
+</div>
+
+<div id="progress">
+  <div class="ptxt" id="ptxt">準備中...</div>
+  <div class="pbar-bg"><div class="pbar" id="pbar"></div></div>
+  <div id="log"></div>
+</div>
+
+<div id="summary">
+  <div class="sg">
+    <div class="sb"><div class="sn g" id="okN">0</div><div class="sl">成功寫入</div></div>
+    <div class="sb"><div class="sn r" id="errN">0</div><div class="sl">失敗</div></div>
+  </div>
+  <button class="reset-btn" id="resetBtn">再輸入一批</button>
+</div>
+
+<script>
+var KEY = 'AIzaSyDKbOj_YY1imt94ADJU_Zj_UDwnXaDq5es';
+var SHEET = 'https://script.google.com/macros/s/AKfycby-54mJkfd9-1RtG_IqWj0NS1fO91wjQJlbem65dzJtnryVMkHqCBLaSvTblh0WdR0Z/exec';
+var API = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=' + KEY;
+
+var imgs = [];
+
+// Wire up file input
+document.getElementById('pics').addEventListener('change', function() {
+  var files = this.files;
+  for (var i = 0; i < files.length; i++) {
+    (function(file) {
+      var fr = new FileReader();
+      fr.onload = function(e) {
+        imgs.push(e.target.result);
+        renderThumbs();
+      };
+      fr.readAsDataURL(file);
+    })(files[i]);
+  }
+});
+
+function renderThumbs() {
+  var el = document.getElementById('thumbs');
+  var html = '';
+  for (var i = 0; i < imgs.length; i++) {
+    html += '<img class="thumb" src="' + imgs[i] + '">';
+  }
+  el.innerHTML = html;
+}
+
+document.getElementById('goBtn').addEventListener('click', function() {
+  runProcess();
+});
+
+document.getElementById('resetBtn').addEventListener('click', function() {
+  document.getElementById('main').style.display = 'block';
+  document.getElementById('progress').style.display = 'none';
+  document.getElementById('summary').style.display = 'none';
+  document.getElementById('log').innerHTML = '';
+  document.getElementById('pbar').style.width = '0%';
+  document.getElementById('words').value = '';
+  document.getElementById('goBtn').disabled = false;
+  imgs = [];
+  renderThumbs();
+  // reset file input
+  document.getElementById('pics').value = '';
+});
+
+function addLog(label, cls, info) {
+  var el = document.getElementById('log');
+  var icon = cls === 'ok' ? '✅' : cls === 'err' ? '❌' : '⏳';
+  var html = '<div class="row ' + cls + '">';
+  html += '<span>' + icon + '</span>';
+  html += '<div><div class="rw">' + label + '</div>';
+  if (info) html += '<div class="ri">' + info + '</div>';
+  html += '</div></div>';
+  el.insertAdjacentHTML('beforeend', html);
+  el.scrollTop = el.scrollHeight;
+  return el.querySelector('.row:last-child');
+}
+
+function updateLog(row, cls, label, info) {
+  row.className = 'row ' + cls;
+  row.querySelector('.rw').textContent = label;
+  var ri = row.querySelector('.ri');
+  if (ri) ri.textContent = info || '';
+  else if (info) {
+    var d = document.createElement('div');
+    d.className = 'ri';
+    d.textContent = info;
+    row.querySelector('div').appendChild(d);
+  }
+  row.querySelector('span').textContent = cls === 'ok' ? '✅' : cls === 'err' ? '❌' : '⏳';
+}
+
+function setBar(cur, total) {
+  document.getElementById('pbar').style.width = (total > 0 ? Math.round(cur/total*100) : 0) + '%';
+  document.getElementById('ptxt').textContent = '處理中 ' + cur + ' / ' + total + ' 批次';
+}
+
+function sleep(ms) {
+  return new Promise(function(res) { setTimeout(res, ms); });
+}
+
+function callAPI(body) {
+  return fetch(API, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  }).then(function(res) {
+    return res.json().then(function(data) {
+      return { status: res.status, data: data };
+    });
+  });
+}
+
+async function gemini(body, attempt) {
+  attempt = attempt || 0;
+  var r = await callAPI(body);
+  if (r.status === 429 && attempt < 3) {
+    await sleep((attempt + 1) * 15000);
+    return gemini(body, attempt + 1);
+  }
+  if (!r.data.candidates || !r.data.candidates[0]) {
+    throw new Error('Gemini 無回應 (status ' + r.status + ')');
+  }
+  return r.data.candidates[0].content.parts[0].text;
+}
+
+async function getWordsFromImage(dataUrl) {
+  var b64 = dataUrl.split(',')[1];
+  var mime = dataUrl.split(';')[0].split(':')[1];
+  var txt = await gemini({
+    contents: [{
+      parts: [
+        { text: '這是英文單字書頁面。只找出字體最大最粗的標題單字，忽略說明文字、例句、音標、翻譯等小字。只回傳逗號分隔的單字列表，不加其他說明。' },
+        { inline_data: { mime_type: mime, data: b64 } }
+      ]
+    }]
+  });
+  return txt.split(',').map(function(w) {
+    return w.trim().replace(/["""'\n\r]/g, '');
+  }).filter(function(w) { return w && w.length < 60; });
+}
+
+async function doAnalyzeBatch(batch) {
+  var prompt = '分析以下 ' + batch.length + ' 個英文單字，回傳 JSON array，每個元素格式：{"Word":"","Phonetic":"","Translation":"","Root":"","Synonyms":"","Collocations":"","Example_EN":"","Example_CH":""}。Root 填拉丁/希臘字根＋來源語言＋原始意義。只回傳 JSON array，不加說明或 markdown。\n\n單字：' + batch.join(', ');
+  var raw = await gemini({ contents: [{ parts: [{ text: prompt }] }] });
+  var clean = raw.replace(/```json|```/g, '').trim();
+  var parsed = JSON.parse(clean);
+  return Array.isArray(parsed) ? parsed : [parsed];
+}
+
+async function runProcess() {
+  var words = [];
+
+  var txt = document.getElementById('words').value.trim();
+  if (txt) {
+    txt.split(',').forEach(function(w) {
+      var c = w.trim().replace(/["""]/g, '');
+      if (c) words.push(c);
+    });
+  }
+
+  document.getElementById('progress').style.display = 'block';
+
+  // Process images
+  if (imgs.length > 0) {
+    document.getElementById('ptxt').textContent = '辨識圖片中...';
+    for (var i = 0; i < imgs.length; i++) {
+      var row = addLog('圖片 ' + (i+1), 'pending', '辨識中...');
+      try {
+        var found = await getWordsFromImage(imgs[i]);
+        words = words.concat(found);
+        updateLog(row, 'ok', '圖片 ' + (i+1), '辨識到：' + found.join(', '));
+      } catch(e) {
+        updateLog(row, 'err', '圖片 ' + (i+1), e.message);
+      }
+    }
+  }
+
+  if (words.length === 0) {
+    alert('請輸入單字或上傳圖片');
+    document.getElementById('progress').style.display = 'none';
+    return;
+  }
+
+  document.getElementById('main').style.display = 'none';
+  document.getElementById('goBtn').disabled = true;
+
+  var today = new Date().toISOString().split('T')[0];
+  var results = [];
+  var ok = 0, err = 0;
+
+  // Split into batches of 5
+  var batches = [];
+  for (var j = 0; j < words.length; j += 5) {
+    batches.push(words.slice(j, j + 5));
+  }
+
+  for (var b = 0; b < batches.length; b++) {
+    var batch = batches[b];
+    setBar(b, batches.length);
+    var brow = addLog('批次 ' + (b+1) + '：' + batch.join(', '), 'pending', '分析中...');
+    try {
+      var data = await doAnalyzeBatch(batch);
+      data.forEach(function(d) {
+        d.Date = today;
+        Object.keys(d).forEach(function(k) {
+          if (typeof d[k] === 'string') d[k] = d[k].replace(/^=/, '');
+        });
+        results.push(d);
+        ok++;
+      });
+      updateLog(brow, 'ok', '批次 ' + (b+1), data.map(function(d){ return d.Word; }).join(', ') + ' ✓');
+    } catch(e) {
+      updateLog(brow, 'err', '批次 ' + (b+1), e.message);
+      err += batch.length;
+    }
+    if (b < batches.length - 1) await sleep(5000);
+  }
+
+  setBar(batches.length, batches.length);
+  document.getElementById('ptxt').textContent = '寫入 Google Sheet...';
+
+  try {
+    await fetch(SHEET, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ words: results })
+    });
+  } catch(e) { console.log('sheet err', e); }
+
+  document.getElementById('okN').textContent = ok;
+  document.getElementById('errN').textContent = err;
+  document.getElementById('summary').style.display = 'block';
+  document.getElementById('ptxt').textContent = '完成！';
+}
+</script>
+</body>
+</html>
