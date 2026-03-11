@@ -111,12 +111,29 @@ var imgs = [];
 // Wire up file input
 document.getElementById('pics').addEventListener('change', function() {
   var files = this.files;
+  if (!files || !files.length) return;
+  var pending = files.length;
+  var btn = document.getElementById('goBtn');
+  btn.disabled = true;
+  btn.textContent = '載入圖片中...';
   for (var i = 0; i < files.length; i++) {
     (function(file) {
       var fr = new FileReader();
       fr.onload = function(e) {
         imgs.push(e.target.result);
         renderThumbs();
+        pending--;
+        if (pending === 0) {
+          btn.disabled = false;
+          btn.textContent = '開始生成並寫入 Sheet';
+        }
+      };
+      fr.onerror = function() {
+        pending--;
+        if (pending === 0) {
+          btn.disabled = false;
+          btn.textContent = '開始生成並寫入 Sheet';
+        }
       };
       fr.readAsDataURL(file);
     })(files[i]);
