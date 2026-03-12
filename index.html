@@ -429,11 +429,22 @@ function switchTab(tab) {
 }
 
 function handleFiles(files) {
-  Array.from(files).forEach(file => {
+  const fileArr = Array.from(files);
+  if (!fileArr.length) return;
+  const btn = document.getElementById('submit-btn');
+  btn.disabled = true;
+  btn.textContent = '載入圖片中...';
+  let pending = fileArr.length;
+  fileArr.forEach(file => {
     const reader = new FileReader();
     reader.onload = (e) => {
       uploadedImages.push({ file, dataUrl: e.target.result });
       renderPreviews();
+      pending--;
+      if (pending === 0) {
+        btn.disabled = false;
+        btn.textContent = '開始生成並寫入 Google Sheet';
+      }
     };
     reader.readAsDataURL(file);
   });
@@ -499,7 +510,13 @@ async function extractWordsFromImage(imageDataUrl) {
 }
 
 async function analyzeBatch(words, retries = 3) {
-  const batchPrompt = `請分析以下 ${words.length} 個英文單字，回傳 JSON array，每個元素格式為 {"Word":"","Phonetic":"","Translation":"","Root":"","Synonyms":"","Collocations":"","Example_EN":"","Example_CH":""}。Root 指拉丁文或希臘文字根（morpheme），列出字根本身＋來源語言＋原始意義。只回傳 JSON array，不要加任何說明或 markdown。
+  const batchPrompt = `請分析以下 ${words.length} 個英文單字，回傳 JSON array，每個元素格式為 {"Word":"","Phonetic":"","PartOfSpeech":"","Translation":"","Root":"","Synonyms":"","Collocations":"","Example_EN":"","Example_CH":""}。
+規則：
+1. PartOfSpeech：若有多個詞性，用換行分隔，例如 "n.\nv."。
+2. Translation：對應每個詞性的翻譯，同樣用換行分隔，例如 "n. 愛，摯愛\nv. 愛，喜歡"。
+3. Synonyms、Collocations、Example_EN、Example_CH：若有多個詞性，每個詞性之間空一行分隔，例如 "n. affection, devotion\n\nv. adore, cherish"。
+4. Root 填拉丁/希臘字根＋來源語言＋原始意義。
+5. 只回傳 JSON array，不加說明或 markdown。
 
 單字列表：${words.join(', ')}`;
 
@@ -555,9 +572,12 @@ async function startProcess() {
       try {
         const extracted = await extractWordsFromImage(uploadedImages[i].dataUrl);
         words.push(...extracted);
-        document.querySelector('#log .log-item:last-child').className = 'log-item success';
-        document.querySelector('#log .log-item:last-child .word').textContent = `圖片 ${i + 1}`;
-        document.querySelector('#log .log-item:last-child .info').textContent = `辨識到：${extracted.join(', ')}`;
+        const imgLog = document.querySelector('#log .log-item:last-child');
+        imgLog.className = 'log-item success';
+        imgLog.querySelector('.word').textContent = `圖片 ${i + 1}`;
+        const imgInfo = imgLog.querySelector('.info');
+        if (imgInfo) imgInfo.textContent = `辨識到：${extracted.join(', ')}`;
+        else { const d = document.createElement('div'); d.className = 'info'; d.textContent = `辨識到：${extracted.join(', ')}`; imgLog.querySelector('div').appendChild(d); }
       } catch (e) {
         addLog(`圖片 ${i + 1}`, 'error', e.message);
       }
