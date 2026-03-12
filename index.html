@@ -533,12 +533,19 @@ async function analyzeBatch(words, retries = 3) {
       const data = await res.json();
 
       if (res.status === 429) {
-        await new Promise(r => setTimeout(r, (attempt + 1) * 15000));
+        await new Promise(r => setTimeout(r, (attempt + 1) * 20000));
+        continue;
+      }
+
+      if (res.status === 503 || res.status === 500) {
+        await new Promise(r => setTimeout(r, (attempt + 1) * 10000));
         continue;
       }
 
       if (!data.candidates || !data.candidates[0]) {
-        throw new Error('Gemini 無回應，請稍後再試');
+        // Model returned empty - wait and retry
+        await new Promise(r => setTimeout(r, (attempt + 1) * 10000));
+        continue;
       }
 
       const raw = data.candidates[0].content.parts[0].text;
@@ -548,9 +555,10 @@ async function analyzeBatch(words, retries = 3) {
 
     } catch (e) {
       if (attempt === retries - 1) throw e;
-      await new Promise(r => setTimeout(r, 8000));
+      await new Promise(r => setTimeout(r, 10000));
     }
   }
+  throw new Error('重試 ' + retries + ' 次後仍失敗');
 }
 
 async function startProcess() {
