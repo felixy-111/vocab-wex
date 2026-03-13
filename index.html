@@ -360,6 +360,7 @@
   <header>
     <h1>單字 <span>Vault</span></h1>
     <p>// auto → gemini → sheets</p>
+    <button id="settings-btn" style="margin-top:10px; background:transparent; border:1px solid #2e2e2e; border-radius:8px; padding:4px 12px; color:#6b6b6b; font-size:0.75rem; cursor:pointer; font-family:'DM Mono',monospace;">⚙ API Key</button>
   </header>
 
   <!-- Input Card -->
@@ -408,9 +409,14 @@
 </div>
 
 <script>
-const GEMINI_API_KEY = 'AIzaSyDKbOj_YY1imt94ADJU_Zj_UDwnXaDq5es';
 const APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycby-54mJkfd9-1RtG_IqWj0NS1fO91wjQJlbem65dzJtnryVMkHqCBLaSvTblh0WdR0Z/exec';
-const GEMINI_URL = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=${GEMINI_API_KEY}`;
+
+function getApiKey() {
+  return localStorage.getItem('gemini_api_key') || '';
+}
+function getGeminiUrl() {
+  return 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=' + getApiKey();
+}
 
 const SYSTEM_PROMPT = `你是英語詞彙分析助手。請只回傳 JSON，不要加任何多餘文字或markdown，格式如下：{"Word": "", "Phonetic": "", "Translation": "", "Root": "", "Synonyms": "", "Collocations": "", "Example_EN": "", "Example_CH": ""}。其中 "Root" 指的是這個單字的拉丁文或希臘文字根（morpheme），例如 "port" 來自拉丁文 "portare"（攜帶），請列出字根本身＋來源語言＋原始意義，不要寫單字的歷史或起源故事。`;
 
@@ -429,22 +435,11 @@ function switchTab(tab) {
 }
 
 function handleFiles(files) {
-  const fileArr = Array.from(files);
-  if (!fileArr.length) return;
-  const btn = document.getElementById('submit-btn');
-  btn.disabled = true;
-  btn.textContent = '載入圖片中...';
-  let pending = fileArr.length;
-  fileArr.forEach(file => {
+  Array.from(files).forEach(file => {
     const reader = new FileReader();
     reader.onload = (e) => {
       uploadedImages.push({ file, dataUrl: e.target.result });
       renderPreviews();
-      pending--;
-      if (pending === 0) {
-        btn.disabled = false;
-        btn.textContent = '開始生成並寫入 Google Sheet';
-      }
     };
     reader.readAsDataURL(file);
   });
@@ -491,7 +486,7 @@ async function extractWordsFromImage(imageDataUrl) {
   const base64 = imageDataUrl.split(',')[1];
   const mimeType = imageDataUrl.split(';')[0].split(':')[1];
 
-  const res = await fetch(GEMINI_URL, {
+  const res = await fetch(getGeminiUrl(), {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -510,19 +505,13 @@ async function extractWordsFromImage(imageDataUrl) {
 }
 
 async function analyzeBatch(words, retries = 3) {
-  const batchPrompt = `請分析以下 ${words.length} 個英文單字，回傳 JSON array，每個元素格式為 {"Word":"","Phonetic":"","PartOfSpeech":"","Translation":"","Root":"","Synonyms":"","Collocations":"","Example_EN":"","Example_CH":""}。
-規則：
-1. PartOfSpeech：若有多個詞性，用換行分隔，例如 "n.\nv."。
-2. Translation：對應每個詞性的翻譯，同樣用換行分隔，例如 "n. 愛，摯愛\nv. 愛，喜歡"。
-3. Synonyms、Collocations、Example_EN、Example_CH：若有多個詞性，每個詞性之間空一行分隔，例如 "n. affection, devotion\n\nv. adore, cherish"。
-4. Root 填拉丁/希臘字根＋來源語言＋原始意義。
-5. 只回傳 JSON array，不加說明或 markdown。
+  const batchPrompt = `請分析以下 ${words.length} 個英文單字，回傳 JSON array，每個元素格式為 {"Word":"","Phonetic":"","PartOfSpeech":"","Translation":"","Root":"","Synonyms":"","Collocations":"","Example_EN":"","Example_CH":""}。PartOfSpeech 填詞性縮寫，若有多詞性用換行分隔如 "n.\nv."。Translation 對應每個詞性翻譯，同樣換行分隔。Synonyms/Collocations/Example_EN/Example_CH 若有多詞性，詞性間空一行分隔。Root 指拉丁文或希臘文字根（morpheme），列出字根本身＋來源語言＋原始意義。只回傳 JSON array，不要加任何說明或 markdown。
 
 單字列表：${words.join(', ')}`;
 
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
-      const res = await fetch(GEMINI_URL, {
+      const res = await fetch(getGeminiUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -533,19 +522,12 @@ async function analyzeBatch(words, retries = 3) {
       const data = await res.json();
 
       if (res.status === 429) {
-        await new Promise(r => setTimeout(r, (attempt + 1) * 20000));
-        continue;
-      }
-
-      if (res.status === 503 || res.status === 500) {
-        await new Promise(r => setTimeout(r, (attempt + 1) * 10000));
+        await new Promise(r => setTimeout(r, (attempt + 1) * 15000));
         continue;
       }
 
       if (!data.candidates || !data.candidates[0]) {
-        // Model returned empty - wait and retry
-        await new Promise(r => setTimeout(r, (attempt + 1) * 10000));
-        continue;
+        throw new Error('Gemini 無回應，請稍後再試');
       }
 
       const raw = data.candidates[0].content.parts[0].text;
@@ -555,10 +537,9 @@ async function analyzeBatch(words, retries = 3) {
 
     } catch (e) {
       if (attempt === retries - 1) throw e;
-      await new Promise(r => setTimeout(r, 10000));
+      await new Promise(r => setTimeout(r, 8000));
     }
   }
-  throw new Error('重試 ' + retries + ' 次後仍失敗');
 }
 
 async function startProcess() {
@@ -580,12 +561,9 @@ async function startProcess() {
       try {
         const extracted = await extractWordsFromImage(uploadedImages[i].dataUrl);
         words.push(...extracted);
-        const imgLog = document.querySelector('#log .log-item:last-child');
-        imgLog.className = 'log-item success';
-        imgLog.querySelector('.word').textContent = `圖片 ${i + 1}`;
-        const imgInfo = imgLog.querySelector('.info');
-        if (imgInfo) imgInfo.textContent = `辨識到：${extracted.join(', ')}`;
-        else { const d = document.createElement('div'); d.className = 'info'; d.textContent = `辨識到：${extracted.join(', ')}`; imgLog.querySelector('div').appendChild(d); }
+        document.querySelector('#log .log-item:last-child').className = 'log-item success';
+        document.querySelector('#log .log-item:last-child .word').textContent = `圖片 ${i + 1}`;
+        document.querySelector('#log .log-item:last-child .info').textContent = `辨識到：${extracted.join(', ')}`;
       } catch (e) {
         addLog(`圖片 ${i + 1}`, 'error', e.message);
       }
@@ -678,4 +656,37 @@ zone.addEventListener('drop', e => {
 });
 </script>
 </body>
+
+<!-- API Key Modal -->
+<div id="api-modal" style="display:none; position:fixed; inset:0; background:rgba(0,0,0,0.85); z-index:999; display:flex; align-items:center; justify-content:center; padding:20px;">
+  <div style="background:#1a1a1a; border:1px solid #2e2e2e; border-radius:16px; padding:28px; max-width:400px; width:100%;">
+    <div style="font-family:'DM Mono',monospace; font-size:0.7rem; color:#c8f060; letter-spacing:0.12em; text-transform:uppercase; margin-bottom:12px;">Gemini API Key</div>
+    <p style="font-size:0.85rem; color:#888; margin-bottom:16px; line-height:1.5;">請輸入你的 Gemini API Key。只會存在你的裝置上，不會上傳。</p>
+    <input id="api-key-input" type="password" placeholder="AIza..." style="display:block; width:100%; background:#242424; border:1px solid #2e2e2e; border-radius:10px; padding:12px; color:#f0ede8; font-size:15px; outline:none; margin-bottom:12px; font-family:'DM Mono',monospace;">
+    <button onclick="saveApiKey()" style="width:100%; padding:14px; background:#c8f060; color:#0f0f0f; border:none; border-radius:10px; font-size:1rem; font-weight:600; cursor:pointer;">確認</button>
+    <p style="font-size:0.75rem; color:#555; margin-top:10px; text-align:center;">沒有 key？<a href="https://aistudio.google.com/app/apikey" target="_blank" style="color:#60d0f0;">點此取得</a></p>
+  </div>
+</div>
+
+<script>
+function saveApiKey() {
+  const key = document.getElementById('api-key-input').value.trim();
+  if (!key.startsWith('AIza')) return alert('請輸入正確的 API Key');
+  localStorage.setItem('gemini_api_key', key);
+  document.getElementById('api-modal').style.display = 'none';
+}
+
+// Show modal if no key saved
+window.addEventListener('DOMContentLoaded', function() {
+  if (!getApiKey()) {
+    document.getElementById('api-modal').style.display = 'flex';
+  }
+});
+
+// Settings button to re-enter key
+document.getElementById('settings-btn').addEventListener('click', function() {
+  document.getElementById('api-key-input').value = getApiKey();
+  document.getElementById('api-modal').style.display = 'flex';
+});
+</script>
 </html>
