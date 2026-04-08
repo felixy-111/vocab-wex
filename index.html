@@ -418,6 +418,8 @@ function getGeminiUrl() {
   return 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite-preview:generateContent?key=' + getApiKey();
 }
 
+const SYSTEM_PROMPT = `你是英語詞彙分析助手。請只回傳 JSON，不要加任何多餘文字或markdown，格式如下：{"Word": "", "Phonetic": "", "Translation": "", "Root": "", "Synonyms": "", "Collocations": "", "Example_EN": "", "Example_CH": ""}。其中 "Root" 指的是這個單字的拉丁文或希臘文字根（morpheme），例如 "port" 來自拉丁文 "portare"（攜帶），請列出字根本身＋來源語言＋原始意義，不要寫單字的歷史或起源故事。`;
+
 let currentTab = 'text';
 let uploadedImages = [];
 let successCount = 0;
@@ -503,43 +505,26 @@ async function extractWordsFromImage(imageDataUrl) {
 }
 
 async function analyzeBatch(words, retries = 3) {
-  const batchPrompt = `請分析以下 ${words.length} 個英文單字，回傳 JSON array。每個欄位說明如下：
-- Word：單字本身
-- Phonetic：音標
-- PartOfSpeech：詞性縮寫，多詞性用換行分隔，如 "n.\nv."
-- MemoryHook：【純記憶口訣，不是翻譯】用一句中文幫助背單字，從以下選最適合的一種：①諧音（island→「愛死蘭」→愛死蘭嶼這島）②字根拆解（transport→trans穿越+port港口→穿越港口運貨）③圖像故事。30字以內，不可寫詞義解釋或翻譯。
-- Translation：【純中文詞義翻譯】對應各詞性的中文意思，多詞性用換行分隔。不可寫聯想故事。
-- Root：拉丁/希臘字根，格式：字根＋來源語言＋原始意義
-- Synonyms：同義詞，多詞性間空一行
-- Collocations：常見搭配，多詞性間空一行
-- Example_EN：英文例句，多詞性間空一行
-- Example_CH：中文例句翻譯，多詞性間空一行
-
-格式：[{"Word":"","Phonetic":"","PartOfSpeech":"","MemoryHook":"","Translation":"","Root":"","Synonyms":"","Collocations":"","Example_EN":"","Example_CH":""}]
-重要：必須回傳恰好 ${words.length} 個元素，每個輸入單字對應一個，不可遺漏。只回傳 JSON array，不要加任何說明或 markdown。
+  const batchPrompt = `請分析以下 ${words.length} 個英文單字，回傳 JSON array，每個元素格式為 {"Word":"","Phonetic":"","PartOfSpeech":"","Translation":"","Root":"","Synonyms":"","Collocations":"","Example_EN":"","Example_CH":""}。PartOfSpeech 填詞性縮寫，若有多詞性用換行分隔如 "n.\nv."。Translation 對應每個詞性翻譯，同樣換行分隔。Synonyms/Collocations/Example_EN/Example_CH 若有多詞性，詞性間空一行分隔。Root 指拉丁文或希臘文字根（morpheme），列出字根本身＋來源語言＋原始意義。只回傳 JSON array，不要加任何說明或 markdown。
 
 單字列表：${words.join(', ')}`;
 
-  let lastError;
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       const res = await fetch(getGeminiUrl(), {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          contents: [{ parts: [{ text: batchPrompt }] }],
-          generationConfig: { maxOutputTokens: 8192 }
+          contents: [{ parts: [{ text: batchPrompt }] }]
         })
       });
 
-      // 429 rate limit: wait and retry
+      const data = await res.json();
+
       if (res.status === 429) {
-        lastError = new Error('Rate limit (429)');
         await new Promise(r => setTimeout(r, (attempt + 1) * 15000));
         continue;
       }
-
-      const data = await res.json();
 
       if (!data.candidates || !data.candidates[0]) {
         throw new Error('Gemini 無回應，請稍後再試');
@@ -548,24 +533,13 @@ async function analyzeBatch(words, retries = 3) {
       const raw = data.candidates[0].content.parts[0].text;
       const cleaned = raw.replace(/```json|```/g, '').trim();
       const parsed = JSON.parse(cleaned);
-      const result = Array.isArray(parsed) ? parsed : [parsed];
-
-      // Validate count: retry if Gemini skipped any words
-      if (result.length < words.length && attempt < retries - 1) {
-        lastError = new Error(`回傳數量不符（預期 ${words.length}，實得 ${result.length}），重試中...`);
-        await new Promise(r => setTimeout(r, 5000));
-        continue;
-      }
-
-      return result;
+      return Array.isArray(parsed) ? parsed : [parsed];
 
     } catch (e) {
-      lastError = e;
-      if (attempt === retries - 1) throw lastError;
+      if (attempt === retries - 1) throw e;
       await new Promise(r => setTimeout(r, 8000));
     }
   }
-  throw lastError || new Error('分析失敗，已達重試上限');
 }
 
 async function startProcess() {
