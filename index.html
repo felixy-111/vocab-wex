@@ -505,7 +505,7 @@ async function extractWordsFromImage(imageDataUrl) {
 }
 
 async function analyzeBatch(words, retries = 3) {
-  const batchPrompt = `請分析以下 ${words.length} 個英文單字，回傳 JSON array，每個元素格式為 {"Word":"","Phonetic":"","PartOfSpeech":"","Translation":"","Root":"","Synonyms":"","Collocations":"","Example_EN":"","Example_CH":""}。PartOfSpeech 填詞性縮寫，若有多詞性用換行分隔如 "n.\nv."。Translation 對應每個詞性翻譯，同樣換行分隔。Synonyms/Collocations/Example_EN/Example_CH 若有多詞性，詞性間空一行分隔。Root 指拉丁文或希臘文字根（morpheme），列出字根本身＋來源語言＋原始意義。只回傳 JSON array，不要加任何說明或 markdown。
+  const batchPrompt = `請分析以下 ${words.length} 個英文單字，回傳 JSON array，每個元素格式為 {"Word":"","Phonetic":"","PartOfSpeech":"","MemoryHook":"","Translation":"","Root":"","Synonyms":"","Collocations":"","Example_EN":"","Example_CH":""}。PartOfSpeech 填詞性縮寫，若有多詞性用換行分隔如 "n.\nv."。Translation 對應每個詞性翻譯，同樣換行分隔。Synonyms/Collocations/Example_EN/Example_CH 若有多詞性，詞性間空一行分隔。Root 指拉丁文或希臘文字根（morpheme），列出字根本身＋來源語言＋原始意義。MemoryHook 填入幫助記憶此單字的中文口訣，可以是：1）諧音聯想（例：island 諧音「愛死蘭」→ 愛死了蘭嶼這座島），2）字根拆解聯想（例：transport = trans（穿越）+ port（港口）→ 穿越港口運送貨物），3）圖像故事聯想，選擇最直覺好記的一種，控制在 30 字以內。只回傳 JSON array，不要加任何說明或 markdown。
 
 單字列表：${words.join(', ')}`;
 
